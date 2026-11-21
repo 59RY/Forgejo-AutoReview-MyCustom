@@ -15,7 +15,8 @@ use anyhow::{Context as _, Result};
 use ar_llm::{ModelTier, OpenAiProvider, Router as LlmRouter};
 use ar_prompts::ReviewOutput;
 use ar_prompts::{
-    fence_nonce, process_nonce_salt, render_review_prompt, system_prompt, ReviewPromptInputs,
+    fence_nonce, japanese_output_enabled, process_nonce_salt, render_review_prompt,
+    system_prompt_for, ReviewPromptInputs,
 };
 use ar_review::{generate_with_self_heal, verify_findings, HealConfig};
 use serde::{Deserialize, Serialize};
@@ -560,8 +561,9 @@ async fn run_one(path: &Path, llm: &LlmRouter, verifier_enabled: bool) -> Fixtur
     });
 
     let started = Instant::now();
+    let system = system_prompt_for(japanese_output_enabled());
     let initial =
-        match generate_with_self_heal(llm, system_prompt(), &prompt, HealConfig::default()).await {
+        match generate_with_self_heal(llm, &system, &prompt, HealConfig::default()).await {
             Ok(output) => output,
             Err(err) => {
                 return FixtureResult {

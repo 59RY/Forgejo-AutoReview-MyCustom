@@ -244,6 +244,59 @@ pub fn system_prompt() -> &'static str {
     SYSTEM_PROMPT
 }
 
+/// Instruction appended to the system prompt when Japanese output is
+/// enabled. It covers only the human-readable fields; the JSON keys,
+/// severity values and category identifiers stay in English so the
+/// output contract is unchanged.
+pub const JAPANESE_OUTPUT_INSTRUCTION: &str = "Write all human-readable output fields \
+    (summary, walkthrough, and each finding's title and message) in Japanese \
+    unless the pull request or the user specifically indicates otherwise.";
+
+/// Parse an `AR_JAPANESE_OUTPUT` value, using the same boolean
+/// vocabulary as `LLM_OMIT_TEMPERATURE`. Unset means `false`.
+///
+/// # Errors
+///
+/// Returns an error naming the variable when the value is not part of
+/// the boolean vocabulary.
+pub fn parse_japanese_output(raw: Option<&str>) -> Result<bool, String> {
+    match raw.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        None | Some("" | "0" | "false" | "no" | "off") => Ok(false),
+        Some("1" | "true" | "yes" | "on") => Ok(true),
+        Some(_) => Err(
+            "AR_JAPANESE_OUTPUT takes true/false, yes/no, on/off, or 1/0".to_owned(),
+        ),
+    }
+}
+
+/// Whether `AR_JAPANESE_OUTPUT` enables Japanese review output in this
+/// process. Read once; an unrecognized value counts as disabled here,
+/// and the gateway validates the variable strictly at startup so a
+/// typo fails fast instead of silently reviewing in English.
+#[inline]
+#[must_use = "returns the cached flag without side effects"]
+pub fn japanese_output_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        parse_japanese_output(std::env::var("AR_JAPANESE_OUTPUT").ok().as_deref())
+            .unwrap_or(false)
+    })
+}
+
+/// The system prompt to send for one review run: [`system_prompt`]
+/// unchanged when `japanese_output` is `false`, with
+/// [`JAPANESE_OUTPUT_INSTRUCTION`] appended as its own section when
+/// `true`.
+#[inline]
+#[must_use = "returns the system prompt text without side effects"]
+pub fn system_prompt_for(japanese_output: bool) -> String {
+    if japanese_output {
+        format!("{SYSTEM_PROMPT}\nOutput language:\n- {JAPANESE_OUTPUT_INSTRUCTION}\n")
+    } else {
+        SYSTEM_PROMPT.to_owned()
+    }
+}
+
 /// The first seven characters of `sha`, or all of it when shorter.
 fn short_sha(sha: &str) -> &str {
     sha.get(..7).unwrap_or(sha)
@@ -261,6 +314,37 @@ mod tests {
             let ident = format!("`{}`", category.as_str());
             assert!(prompt.contains(&ident), "system prompt is missing {ident}");
         }
+    }
+
+    #[test]
+    fn system_prompt_for_without_japanese_matches_system_prompt() {
+        assert_eq!(system_prompt_for(false), system_prompt());
+    }
+
+    #[test]
+    fn system_prompt_for_with_japanese_appends_the_instruction() {
+        let prompt = system_prompt_for(true);
+        assert!(prompt.starts_with(system_prompt()));
+        assert!(prompt.contains(JAPANESE_OUTPUT_INSTRUCTION));
+        // The output contract still applies: every category stays defined.
+        for category in FindingCategory::ALL {
+            let ident = format!("`{}`", category.as_str());
+            assert!(prompt.contains(&ident), "system prompt is missing {ident}");
+        }
+    }
+
+    #[test]
+    fn parse_japanese_output_accepts_the_bool_vocabulary() {
+        assert!(!parse_japanese_output(None).expect("unset parses"));
+        assert!(!parse_japanese_output(Some(" off ")).expect("off parses"));
+        assert!(parse_japanese_output(Some("TRUE")).expect("true parses"));
+        assert!(parse_japanese_output(Some("1")).expect("1 parses"));
+    }
+
+    #[test]
+    fn parse_japanese_output_rejects_garbage_naming_the_variable() {
+        let err = parse_japanese_output(Some("maybe")).expect_err("garbage is rejected");
+        assert!(err.contains("AR_JAPANESE_OUTPUT"), "error names the variable: {err}");
     }
 
     fn sample<'input>(diff: &'input str, files: &'input [String]) -> ReviewPromptInputs<'input> {

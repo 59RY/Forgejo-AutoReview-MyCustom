@@ -221,6 +221,7 @@ const INNER_GATEWAY_ENV_ALLOWLIST: &[&str] = &[
     "LLM_EMBEDDING_BASE_URL",
     "LLM_EMBEDDING_API_KEY",
     "LLM_OMIT_TEMPERATURE",
+    "AR_JAPANESE_OUTPUT",
     "AR_EMBED_INPUT_CAP_BYTES",
     "AR_EMBED_BATCH_SIZE",
     "AR_EMBED_NUM_CTX",
@@ -1330,6 +1331,17 @@ pub async fn run_from_env(options: StartupOptions) -> Result<()> {
         parse_llm_omit_temperature(read_non_empty_env("LLM_OMIT_TEMPERATURE").as_deref())?;
     if omit_temperature {
         tracing::info!("LLM_OMIT_TEMPERATURE set; chat requests omit temperature");
+    }
+
+    // Validated here so a typo fails startup instead of silently
+    // reviewing in English; ar-prompts reads the same variable when
+    // rendering each review's system prompt.
+    let japanese_output = ar_prompts::parse_japanese_output(
+        read_non_empty_env("AR_JAPANESE_OUTPUT").as_deref(),
+    )
+    .map_err(anyhow::Error::msg)?;
+    if japanese_output {
+        tracing::info!("AR_JAPANESE_OUTPUT set; review output will be written in Japanese");
     }
 
     let reasoning_provider = Arc::new(
