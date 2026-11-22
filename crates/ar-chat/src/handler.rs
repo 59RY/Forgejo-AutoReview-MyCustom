@@ -529,7 +529,7 @@ impl ChatHandler<'_> {
                     "ドラフトの間は承認できません。",
                 ),
             )
-                .await?;
+            .await?;
             return Ok(());
         }
         if pr.state != "open" {
@@ -540,7 +540,7 @@ impl ChatHandler<'_> {
                     "クローズ／マージ済みの PR は承認できません。",
                 ),
             )
-                .await?;
+            .await?;
             return Ok(());
         }
 
@@ -796,7 +796,10 @@ impl ChatHandler<'_> {
             .await?;
         if pr.draft {
             let msg = if ar_prompts::japanese_output_enabled() {
-                format!("{} をスキップします: この PR はドラフトです。", kind.label())
+                format!(
+                    "{} をスキップします: この PR はドラフトです。",
+                    kind.label()
+                )
             } else {
                 format!("Skipping {}: this PR is a draft.", kind.lowercase_label())
             };
@@ -941,7 +944,7 @@ impl ChatHandler<'_> {
                     "テストの足場生成をスキップします: この PR はドラフトです。",
                 ),
             )
-                .await?;
+            .await?;
             return Ok(());
         }
         if pr.state != "open" {
@@ -1019,7 +1022,8 @@ impl ChatHandler<'_> {
             // output and can investigate.
             let msg = if ar_prompts::japanese_output_enabled() {
                 if raw_scaffold_count == 0 {
-                    "差分の中に、新しいカバレッジが必要そうな項目は見つかりませんでした。".to_owned()
+                    "差分の中に、新しいカバレッジが必要そうな項目は見つかりませんでした。"
+                        .to_owned()
                 } else {
                     format!(
                         "テストの足場を {raw_scaffold_count} 件提案しましたが、項目名と\
@@ -1530,7 +1534,10 @@ fn build_tests_user_prompt(diff: &str) -> String {
 /// code fence.
 fn format_test_scaffolds_body(scaffolds: &[TestScaffold]) -> String {
     let mut out = String::with_capacity(2_048);
-    out.push_str(ar_prompts::localized("**Test scaffolds**\n\n", "**テストの足場**\n\n"));
+    out.push_str(ar_prompts::localized(
+        "**Test scaffolds**\n\n",
+        "**テストの足場**\n\n",
+    ));
     out.push_str(ar_prompts::localized(
         "Below are scaffolded tests for items in this PR that look like \
          they could use coverage. Tests usually live in a separate file, \
