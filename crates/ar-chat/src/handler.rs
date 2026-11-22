@@ -117,6 +117,40 @@ cases (tests live in separate files, so no inline suggestion).
 
 Anything else after the mention is treated as a freeform question.";
 
+const HELP_TEXT_JA: &str = "\
+**auto_review チャットコマンド**（`@auto-review` とメンションしてください。`@auto_review` でも動きます）:
+
+- `remember <text>` \u{2014} このリポジトリ向けの guidance を保存します。一致する \
+学習は、このリポジトリの今後のレビューにだけ反映されます。
+- `forget <id>` \u{2014} このリポジトリの学習を id で削除します \
+（id は `remember` の返信に表示されます）。
+- `re-review` \u{2014} 現在の head SHA でレビューを再実行します。 \
+記録済みのレビュー履歴は無視します。
+- `autofix` \u{2014} 安全で機械的な修正（タイプミス、デッドコード、明白な \
+off-by-one）に、インラインの suggestion パッチを提案します。1回のコマンドで \
+最大5件、低価格 tier のモデルが安全性を判断します。
+- `tests` \u{2014} 差分で新しく追加されたのにカバレッジがない項目へ、単体テストの \
+足場を生成します。テストは別ファイルに置くため、インライン提案ではなく、 \
+コピペできるテストケースを1つのコメントで投稿します。
+- `help` \u{2014} このメッセージを表示します。
+
+メンションの後に書いたそれ以外の内容は、自由形式の質問として扱います。";
+
+const DOCSTRING_RETIRED_NOTICE_JA: &str = "`docstring` コマンドは廃止され、提案は \
+生成されなくなりました。機械的な修正には `@auto-review autofix` を使ってください。 \
+docstring の作成は、自分のコーディングエージェントに頼んでください。 \
+現在のコマンドは `@auto-review help` で確認できます。";
+
+/// The `help` reply in the configured output language.
+fn help_text() -> &'static str {
+    ar_prompts::localized(HELP_TEXT, HELP_TEXT_JA)
+}
+
+/// The retired-`docstring` reply in the configured output language.
+fn docstring_retired_notice() -> &'static str {
+    ar_prompts::localized(DOCSTRING_RETIRED_NOTICE, DOCSTRING_RETIRED_NOTICE_JA)
+}
+
 /// Per-field caps on what we'll inline into a Forgejo review-comment
 /// body. Without these, a misbehaving cheap-tier model could blow
 /// past Forgejo's per-review payload limit (Forgejo doesn't document
@@ -332,7 +366,7 @@ impl ChatHandler<'_> {
     ) -> Result<(), ChatError> {
         match command {
             ChatCommand::Help => {
-                self.post(ctx, HELP_TEXT).await?;
+                self.post(ctx, help_text()).await?;
             }
             ChatCommand::Remember(text) => {
                 self.handle_remember(ctx, &text).await?;
@@ -350,7 +384,7 @@ impl ChatHandler<'_> {
                 self.handle_suggest(ctx, SuggestionKind::Autofix).await?;
             }
             ChatCommand::DocstringRetired => {
-                self.post(ctx, DOCSTRING_RETIRED_NOTICE).await?;
+                self.post(ctx, docstring_retired_notice()).await?;
             }
             ChatCommand::TestScaffolds => {
                 self.handle_test_scaffolds(ctx).await?;
@@ -379,9 +413,19 @@ impl ChatHandler<'_> {
         // legacy learning and a missing id all get the same reply, so
         // the reply cannot be used to probe other repositories' ids.
         let reply = match self.learnings.remove(id, Some(&ctx.repo_scope())).await {
-            Ok(()) => format!("Forgotten learning #{id}."),
+            Ok(()) => {
+                if ar_prompts::japanese_output_enabled() {
+                    format!("学習 #{id} を忘れました。")
+                } else {
+                    format!("Forgotten learning #{id}.")
+                }
+            }
             Err(ar_index::LearningsError::NotFound(_)) => {
-                format!("No learning with id {id} in this repository")
+                if ar_prompts::japanese_output_enabled() {
+                    format!("このリポジトリに id {id} の学習はありません")
+                } else {
+                    format!("No learning with id {id} in this repository")
+                }
             }
             Err(error) => return Err(ChatError::Learnings(error)),
         };
@@ -401,8 +445,12 @@ impl ChatHandler<'_> {
         if self.llm.provider(ModelTier::Cheap).is_err() {
             self.post(
                 ctx,
-                "Conversational replies need an LLM_CHEAP_MODEL configured. \
-                 Try `@auto-review help` for the structured commands.",
+                ar_prompts::localized(
+                    "Conversational replies need an LLM_CHEAP_MODEL configured. \
+                     Try `@auto-review help` for the structured commands.",
+                    "会話形式の返信には LLM_CHEAP_MODEL の設定が必要です。\
+                     コマンド一覧は `@auto-review help` を見てください。",
+                ),
             )
             .await?;
             return Ok(());
@@ -431,13 +479,21 @@ impl ChatHandler<'_> {
 
         let user_prompt = build_freeform_user_prompt(&question_capped, &truncated);
         let req = CompleteRequest {
-            system: Some(FREEFORM_SYSTEM_PROMPT.to_owned()),
+            system: Some(if ar_prompts::japanese_output_enabled() {
+                format!("{FREEFORM_SYSTEM_PROMPT}\nAnswer in Japanese.")
+            } else {
+                FREEFORM_SYSTEM_PROMPT.to_owned()
+            }),
             messages: vec![Message::user(user_prompt)],
             ..Default::default()
         };
         let resp = self.llm.complete(ModelTier::Cheap, req).await?;
         let reply = if resp.content.trim().is_empty() {
-            "(no response from the chat model)".to_owned()
+            ar_prompts::localized(
+                "(no response from the chat model)",
+                "（チャットモデルから応答がありませんでした）",
+            )
+            .to_owned()
         } else if resp.content.len() > FREEFORM_REPLY_CAP {
             tracing::warn!(
                 original_bytes = resp.content.len(),
@@ -466,12 +522,24 @@ impl ChatHandler<'_> {
             .get_pull_request(ctx.owner, ctx.repo, ctx.issue_number)
             .await?;
         if pr.draft {
-            self.post(ctx, "I can't approve while this PR is a draft.")
+            self.post(
+                ctx,
+                ar_prompts::localized(
+                    "I can't approve while this PR is a draft.",
+                    "ドラフトの間は承認できません。",
+                ),
+            )
                 .await?;
             return Ok(());
         }
         if pr.state != "open" {
-            self.post(ctx, "I can't approve a closed or merged PR.")
+            self.post(
+                ctx,
+                ar_prompts::localized(
+                    "I can't approve a closed or merged PR.",
+                    "クローズ／マージ済みの PR は承認できません。",
+                ),
+            )
                 .await?;
             return Ok(());
         }
@@ -484,7 +552,10 @@ impl ChatHandler<'_> {
             self.approve(
                 &ctx,
                 &pr.head.sha,
-                "Approved \u{2014} there were no outstanding findings to override.",
+                ar_prompts::localized(
+                    "Approved \u{2014} there were no outstanding findings to override.",
+                    "承認しました — 未解決の指摘はありませんでした。",
+                ),
             )
             .await?;
             return Ok(());
@@ -496,12 +567,22 @@ impl ChatHandler<'_> {
             self.remember_correction(&ctx, correction).await?;
             self.post(
                 ctx,
-                &format!(
-                    "I can't override my outstanding findings on request, @{}. Only users listed under \
-                     `override_approvers` in this repo's `.auto_review.yaml` may force an approval over open \
-                     findings. I've noted your feedback for future reviews.",
-                    ctx.commenter_login
-                ),
+                &if ar_prompts::japanese_output_enabled() {
+                    format!(
+                        "未解決の指摘を @{} さんのリクエストで上書きすることはできません。\
+                         上書きできるのは、このリポジトリの `.auto_review.yaml` で \
+                         `override_approvers` に指定されたユーザーだけです。\
+                         フィードバックは今後のレビューのために記録しました。",
+                        ctx.commenter_login
+                    )
+                } else {
+                    format!(
+                        "I can't override my outstanding findings on request, @{}. Only users listed under \
+                         `override_approvers` in this repo's `.auto_review.yaml` may force an approval over open \
+                         findings. I've noted your feedback for future reviews.",
+                        ctx.commenter_login
+                    )
+                },
             )
             .await?;
             return Ok(());
@@ -511,9 +592,14 @@ impl ChatHandler<'_> {
         let Some(reason) = self.judge_override_reason(correction).await else {
             self.post(
                 ctx,
-                "To override my outstanding finding(s) I need to record *why*. Please reply explaining why \
-                 the finding(s) are acceptable, and I'll approve and note the reason on the PR so it lands in \
-                 the merge commit.",
+                ar_prompts::localized(
+                    "To override my outstanding finding(s) I need to record *why*. Please reply explaining why \
+                     the finding(s) are acceptable, and I'll approve and note the reason on the PR so it lands in \
+                     the merge commit.",
+                    "未解決の指摘を上書きするには、理由（*why*）の記録が必要です。\
+                     指摘が許容できる理由を返信してください。承認して、理由を PR に\
+                     記録し、マージコミットに残るようにします。",
+                ),
             )
             .await?;
             return Ok(());
@@ -551,8 +637,12 @@ impl ChatHandler<'_> {
         let Some(dispatcher) = self.dispatcher.as_ref() else {
             self.post(
                 ctx,
-                "Re-review isn't wired up here (no dispatcher configured). The \
-                 next review on this PR will run when the next webhook fires.",
+                ar_prompts::localized(
+                    "Re-review isn't wired up here (no dispatcher configured). The \
+                     next review on this PR will run when the next webhook fires.",
+                    "再レビューはここでは有効化されていません（dispatcher が設定されていません）。\
+                     次のレビューは、次の webhook が発火したときに実行されます。",
+                ),
             )
             .await?;
             return Ok(());
@@ -565,7 +655,10 @@ impl ChatHandler<'_> {
         if pr.draft {
             self.post(
                 ctx,
-                "Skipping re-review: this PR is a draft. Mark it ready first.",
+                ar_prompts::localized(
+                    "Skipping re-review: this PR is a draft. Mark it ready first.",
+                    "再レビューをスキップします: この PR はドラフトです。先に Ready にしてください。",
+                ),
             )
             .await?;
             return Ok(());
@@ -578,8 +671,12 @@ impl ChatHandler<'_> {
         if pr.state != "open" {
             self.post(
                 ctx,
-                "Skipping re-review: this PR is closed/merged. Reopen it first \
-                 if you want a fresh review.",
+                ar_prompts::localized(
+                    "Skipping re-review: this PR is closed/merged. Reopen it first \
+                     if you want a fresh review.",
+                    "再レビューをスキップします: この PR はクローズ／マージ済みです。\
+                     新しくレビューしたい場合は、先に Reopen してください。",
+                ),
             )
             .await?;
             return Ok(());
@@ -597,10 +694,17 @@ impl ChatHandler<'_> {
             force: true,
         };
         dispatcher.dispatch(job).await;
-        let reply = format!(
-            "Queued a forced review at {}. This intentionally bypasses CI gating; watch the commit-status badge for progress.",
-            pr.head.sha
-        );
+        let reply = if ar_prompts::japanese_output_enabled() {
+            format!(
+                "強制レビューをキューに入れました（対象コミット: {}）。CI のゲートを意図的にバイパスします。進捗はコミットステータスのバッジで確認してください。",
+                pr.head.sha
+            )
+        } else {
+            format!(
+                "Queued a forced review at {}. This intentionally bypasses CI gating; watch the commit-status badge for progress.",
+                pr.head.sha
+            )
+        };
         self.post(ctx, &reply).await
     }
 
@@ -615,13 +719,22 @@ impl ChatHandler<'_> {
         // that is almost certainly a paste mistake.
         const REMEMBER_MAX_BYTES: usize = 4_096;
         if text.len() > REMEMBER_MAX_BYTES {
-            let reply = format!(
-                "That's {} bytes \u{2014} capped at {} bytes per learning. \
-                 Re-issue with a shorter snippet or break it into multiple \
-                 `remember` calls.",
-                text.len(),
-                REMEMBER_MAX_BYTES
-            );
+            let reply = if ar_prompts::japanese_output_enabled() {
+                format!(
+                    "{} バイトあります \u{2014} 学習1件の上限は {} バイトです。\
+                     短くするか、複数の `remember` に分けてください。",
+                    text.len(),
+                    REMEMBER_MAX_BYTES
+                )
+            } else {
+                format!(
+                    "That's {} bytes \u{2014} capped at {} bytes per learning. \
+                     Re-issue with a shorter snippet or break it into multiple \
+                     `remember` calls.",
+                    text.len(),
+                    REMEMBER_MAX_BYTES
+                )
+            };
             self.post(ctx, &reply).await?;
             return Ok(());
         }
@@ -638,10 +751,17 @@ impl ChatHandler<'_> {
                 Some(ctx.issue_number),
             )
             .await?;
-        let reply = format!(
-            "Remembered as learning #{}. To revoke later: `@auto-review forget {}`.",
-            record.id, record.id
-        );
+        let reply = if ar_prompts::japanese_output_enabled() {
+            format!(
+                "学習 #{} として覚えました。取り消すときは `@auto-review forget {}` です。",
+                record.id, record.id
+            )
+        } else {
+            format!(
+                "Remembered as learning #{}. To revoke later: `@auto-review forget {}`.",
+                record.id, record.id
+            )
+        };
         self.post(ctx, &reply).await
     }
 
@@ -654,11 +774,19 @@ impl ChatHandler<'_> {
         kind: SuggestionKind,
     ) -> Result<(), ChatError> {
         if self.llm.provider(ModelTier::Cheap).is_err() {
-            let msg = format!(
-                "{} needs an LLM_CHEAP_MODEL configured. Try \
-                 `@auto-review help` for the structured commands.",
-                kind.label()
-            );
+            let msg = if ar_prompts::japanese_output_enabled() {
+                format!(
+                    "{} には LLM_CHEAP_MODEL の設定が必要です。\
+                     コマンド一覧は `@auto-review help` を見てください。",
+                    kind.label()
+                )
+            } else {
+                format!(
+                    "{} needs an LLM_CHEAP_MODEL configured. Try \
+                     `@auto-review help` for the structured commands.",
+                    kind.label()
+                )
+            };
             self.post(ctx, &msg).await?;
             return Ok(());
         }
@@ -667,7 +795,11 @@ impl ChatHandler<'_> {
             .get_pull_request(ctx.owner, ctx.repo, ctx.issue_number)
             .await?;
         if pr.draft {
-            let msg = format!("Skipping {}: this PR is a draft.", kind.lowercase_label());
+            let msg = if ar_prompts::japanese_output_enabled() {
+                format!("{} をスキップします: この PR はドラフトです。", kind.label())
+            } else {
+                format!("Skipping {}: this PR is a draft.", kind.lowercase_label())
+            };
             self.post(ctx, &msg).await?;
             return Ok(());
         }
@@ -675,10 +807,17 @@ impl ChatHandler<'_> {
         // suggestions on a closed PR either errors from Forgejo or
         // posts comments the user can't act on.
         if pr.state != "open" {
-            let msg = format!(
-                "Skipping {}: this PR is closed/merged. Reopen it first.",
-                kind.lowercase_label()
-            );
+            let msg = if ar_prompts::japanese_output_enabled() {
+                format!(
+                    "{} をスキップします: この PR はクローズ／マージ済みです。先に Reopen してください。",
+                    kind.label()
+                )
+            } else {
+                format!(
+                    "Skipping {}: this PR is closed/merged. Reopen it first.",
+                    kind.lowercase_label()
+                )
+            };
             self.post(ctx, &msg).await?;
             return Ok(());
         }
@@ -691,10 +830,17 @@ impl ChatHandler<'_> {
                 String::new()
             });
         if diff.trim().is_empty() {
-            let msg = format!(
-                "{} can't run without a diff (none returned by Forgejo).",
-                kind.label()
-            );
+            let msg = if ar_prompts::japanese_output_enabled() {
+                format!(
+                    "{} は差分がないと実行できません（Forgejo から差分が返りませんでした）。",
+                    kind.label()
+                )
+            } else {
+                format!(
+                    "{} can't run without a diff (none returned by Forgejo).",
+                    kind.label()
+                )
+            };
             self.post(ctx, &msg).await?;
             return Ok(());
         }
@@ -719,10 +865,17 @@ impl ChatHandler<'_> {
             Ok(output) => output,
             Err(error) => {
                 tracing::warn!(kind = ?kind, %error, "model returned malformed JSON");
-                let msg = format!(
-                    "{} didn't return well-formed suggestions; nothing posted.",
-                    kind.label()
-                );
+                let msg = if ar_prompts::japanese_output_enabled() {
+                    format!(
+                        "{} の出力が正しい形式でなかったため、何も投稿しませんでした。",
+                        kind.label()
+                    )
+                } else {
+                    format!(
+                        "{} didn't return well-formed suggestions; nothing posted.",
+                        kind.label()
+                    )
+                };
                 self.post(ctx, &msg).await?;
                 return Ok(());
             }
@@ -766,8 +919,12 @@ impl ChatHandler<'_> {
         if self.llm.provider(ModelTier::Cheap).is_err() {
             self.post(
                 ctx,
-                "Test scaffolding needs an LLM_CHEAP_MODEL configured. \
-                 Try `@auto-review help` for the structured commands.",
+                ar_prompts::localized(
+                    "Test scaffolding needs an LLM_CHEAP_MODEL configured. \
+                     Try `@auto-review help` for the structured commands.",
+                    "テストの足場生成には LLM_CHEAP_MODEL の設定が必要です。\
+                     コマンド一覧は `@auto-review help` を見てください。",
+                ),
             )
             .await?;
             return Ok(());
@@ -777,14 +934,23 @@ impl ChatHandler<'_> {
             .get_pull_request(ctx.owner, ctx.repo, ctx.issue_number)
             .await?;
         if pr.draft {
-            self.post(ctx, "Skipping test scaffolds: this PR is a draft.")
+            self.post(
+                ctx,
+                ar_prompts::localized(
+                    "Skipping test scaffolds: this PR is a draft.",
+                    "テストの足場生成をスキップします: この PR はドラフトです。",
+                ),
+            )
                 .await?;
             return Ok(());
         }
         if pr.state != "open" {
             self.post(
                 ctx,
-                "Skipping test scaffolds: this PR is closed/merged. Reopen it first.",
+                ar_prompts::localized(
+                    "Skipping test scaffolds: this PR is closed/merged. Reopen it first.",
+                    "テストの足場生成をスキップします: この PR はクローズ／マージ済みです。先に Reopen してください。",
+                ),
             )
             .await?;
             return Ok(());
@@ -800,7 +966,10 @@ impl ChatHandler<'_> {
         if diff.trim().is_empty() {
             self.post(
                 ctx,
-                "Test scaffolding can't run without a diff (none returned by Forgejo).",
+                ar_prompts::localized(
+                    "Test scaffolding can't run without a diff (none returned by Forgejo).",
+                    "テストの足場生成は差分がないと実行できません（Forgejo から差分が返りませんでした）。",
+                ),
             )
             .await?;
             return Ok(());
@@ -826,7 +995,10 @@ impl ChatHandler<'_> {
                 tracing::warn!(%error, "tests model returned malformed JSON");
                 self.post(
                     ctx,
-                    "Test scaffolding didn't return well-formed output; nothing posted.",
+                    ar_prompts::localized(
+                        "Test scaffolding didn't return well-formed output; nothing posted.",
+                        "テストの足場生成の出力が正しい形式でなかったため、何も投稿しませんでした。",
+                    ),
                 )
                 .await?;
                 return Ok(());
@@ -845,7 +1017,16 @@ impl ChatHandler<'_> {
             // item_name or empty source). Operators seeing the
             // second variant know the model is producing low-quality
             // output and can investigate.
-            let msg = if raw_scaffold_count == 0 {
+            let msg = if ar_prompts::japanese_output_enabled() {
+                if raw_scaffold_count == 0 {
+                    "差分の中に、新しいカバレッジが必要そうな項目は見つかりませんでした。".to_owned()
+                } else {
+                    format!(
+                        "テストの足場を {raw_scaffold_count} 件提案しましたが、項目名と\
+                         ソースコードの両方が揃ったものがなかったため、すべて破棄しました（形式不備）。"
+                    )
+                }
+            } else if raw_scaffold_count == 0 {
                 "Test scaffolding found nothing in the diff that needs new coverage.".to_owned()
             } else {
                 format!(
@@ -984,13 +1165,22 @@ impl ChatHandler<'_> {
                 new_position: Some(patch.line),
             })
             .collect();
-        let body = format!(
-            "{} posted {} suggested {}. Each is applicable inline; \
-             review and click 'Apply suggestion' on the ones you want.",
-            kind.label(),
-            comments.len(),
-            kind.unit_plural(comments.len()),
-        );
+        let body = if ar_prompts::japanese_output_enabled() {
+            format!(
+                "{} が {} 件のパッチを投稿しました。各提案はインラインで適用できます。\
+                 使いたいものはレビューして「Apply suggestion」を押してください。",
+                kind.label(),
+                comments.len()
+            )
+        } else {
+            format!(
+                "{} posted {} suggested {}. Each is applicable inline; \
+                 review and click 'Apply suggestion' on the ones you want.",
+                kind.label(),
+                comments.len(),
+                kind.unit_plural(comments.len()),
+            )
+        };
         let request = CreateReviewRequest {
             body,
             commit_id: head_sha,
@@ -1186,6 +1376,25 @@ fn summarize_finding(comment_body: &str) -> String {
 
 /// The approval review body posted when a human override is honored.
 fn render_override_review_body(commenter: &str, reason: &str, findings: &[String]) -> String {
+    if ar_prompts::japanese_output_enabled() {
+        let mut body = format!(
+            "@{commenter} さんのリクエストで承認しました。未解決の{}を上書きします。\n\n理由: {reason}",
+            if findings.is_empty() {
+                "マージ前チェックの異議".to_owned()
+            } else {
+                format!("{} 件の指摘", findings.len())
+            }
+        );
+        if !findings.is_empty() {
+            body.push_str("\n\n上書きする指摘:");
+            for finding in findings {
+                body.push_str("\n- ");
+                body.push_str(finding);
+            }
+        }
+        body.push_str("\n\nこの上書きは PR の説明に記録しました。マージコミットにも残ります。");
+        return body;
+    }
     let mut body = format!(
         "Approved at @{commenter}'s request, overriding my outstanding {}.\n\nReason: {reason}",
         if findings.is_empty() {
@@ -1210,6 +1419,24 @@ fn render_override_review_body(commenter: &str, reason: &str, findings: &[String
 /// The `## Approval override` section stamped into the PR body (and thus the
 /// squash/merge commit description).
 fn render_override_pr_section(commenter: &str, reason: &str, findings: &[String]) -> String {
+    if ar_prompts::japanese_output_enabled() {
+        let mut section = format!(
+            "## 承認の上書き\n\n@{commenter} が auto-review の未解決の{}を上書きして承認しました。\n\n理由: {reason}",
+            if findings.is_empty() {
+                "マージ前チェックの異議".to_owned()
+            } else {
+                format!("{} 件の指摘", findings.len())
+            }
+        );
+        if !findings.is_empty() {
+            section.push_str("\n\n上書きした指摘:");
+            for finding in findings {
+                section.push_str("\n- ");
+                section.push_str(finding);
+            }
+        }
+        return section;
+    }
     let mut section = format!(
         "## Approval override\n\nApproval forced by @{commenter} over auto-review's outstanding {}.\n\nReason: {reason}",
         if findings.is_empty() {
@@ -1303,12 +1530,15 @@ fn build_tests_user_prompt(diff: &str) -> String {
 /// code fence.
 fn format_test_scaffolds_body(scaffolds: &[TestScaffold]) -> String {
     let mut out = String::with_capacity(2_048);
-    out.push_str("**Test scaffolds**\n\n");
-    out.push_str(
+    out.push_str(ar_prompts::localized("**Test scaffolds**\n\n", "**テストの足場**\n\n"));
+    out.push_str(ar_prompts::localized(
         "Below are scaffolded tests for items in this PR that look like \
          they could use coverage. Tests usually live in a separate file, \
          so these are copy-paste-ready rather than inline suggestions.\n\n",
-    );
+        "以下は、この PR でカバレッジが不足していそうな項目向けに生成した\
+         テストの足場です。テストは通常は別ファイルに置くため、インライン提案では\
+         なく、コピペできる形で示します。\n\n",
+    ));
     for scaffold in scaffolds {
         let header = if scaffold.item_path.is_empty() {
             format!("### `{}`", scaffold.item_name)
@@ -1320,7 +1550,7 @@ fn format_test_scaffolds_body(scaffolds: &[TestScaffold]) -> String {
         if scaffold.framework.trim().is_empty() {
             out.push('\n');
         } else {
-            out.push_str("Framework: `");
+            out.push_str(ar_prompts::localized("Framework: `", "フレームワーク: `"));
             out.push_str(scaffold.framework.trim());
             out.push_str("`\n\n");
         }
@@ -1558,7 +1788,17 @@ fn current_unix_seconds() -> Result<i64, ChatError> {
 /// Reply when a suggestion command posts nothing: distinguishes "the model
 /// found nothing" from "every proposed patch failed validation".
 fn no_suggestions_message(kind: SuggestionKind, raw_patch_count: usize) -> String {
-    if raw_patch_count == 0 {
+    if ar_prompts::japanese_output_enabled() {
+        if raw_patch_count == 0 {
+            format!("{} は提案するものを見つけられませんでした。", kind.label())
+        } else {
+            format!(
+                "{} が {raw_patch_count} 件のパッチを提案しましたが、この PR の差分にある\
+                 ファイルを指すものがなかったため、すべて破棄しました（存在しないパスでした）。",
+                kind.label()
+            )
+        }
+    } else if raw_patch_count == 0 {
         format!("{} found nothing to suggest.", kind.label())
     } else {
         format!(

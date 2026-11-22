@@ -240,7 +240,7 @@ Common optional env vars:
 | `LLM_EMBEDDING_MODEL` | — | Enables RAG context retrieval |
 | `LLM_EMBEDDING_BASE_URL` / `LLM_EMBEDDING_API_KEY` | `=LLM_BASE_URL` / `=LLM_API_KEY` | Optional embedding endpoint override |
 | `LLM_OMIT_TEMPERATURE` | `false` | Set `true` for OpenAI reasoning models (`gpt-5.x`, `gpt-6.x`, `o`-series), which reject a non-default temperature; leave unset for Ollama and `gpt-4.x` to keep deterministic `temperature: 0.0` |
-| `AR_JAPANESE_OUTPUT` | `false` | Set `true` to write review summaries, walkthroughs, and finding titles/messages in Japanese (fork extension; JSON keys and severity/category identifiers stay in English) |
+| `AR_JAPANESE_OUTPUT` | `false` | Set `true` to write review output in Japanese: summaries, walkthroughs, finding titles/messages, the pre-merge checks section, the usage/cost footer, and fixed chat replies (fork extension; JSON keys and severity/category identifiers stay in English) |
 | `AR_GATEWAY_BIND` | `0.0.0.0:8080` | Listen address |
 | `AR_BOT_LOGIN` | `auto-review` | Forgejo username for self-loop detection |
 | `AR_BOT_NAME` | `=AR_BOT_LOGIN` | Mention handle |
