@@ -17,7 +17,7 @@
 extern crate alloc;
 
 pub mod command;
-#[allow(
+#[expect(
     clippy::non_ascii_literal,
     reason = "the fork's Japanese chat replies (AR_JAPANESE_OUTPUT) are kept as readable literals"
 )]
