@@ -845,16 +845,7 @@ impl ChatHandler<'_> {
     /// `tests`: post scaffolded test cases for newly-added items in the diff.
     async fn handle_test_scaffolds(&self, ctx: ChatContext<'_>) -> Result<(), ChatError> {
         if self.llm.provider(ModelTier::Cheap).is_err() {
-            self.post(
-                ctx,
-                ar_prompts::localized(
-                    "Test scaffolding needs an LLM_CHEAP_MODEL configured. \
-                     Try `@auto-review help` for the structured commands.",
-                    "テストの足場生成には LLM_CHEAP_MODEL の設定が必要です。\
-                     コマンド一覧は `@auto-review help` を見てください。",
-                ),
-            )
-            .await?;
+            self.post(ctx, tests_no_model_message()).await?;
             return Ok(());
         }
         let pr = self
@@ -862,25 +853,11 @@ impl ChatHandler<'_> {
             .get_pull_request(ctx.owner, ctx.repo, ctx.issue_number)
             .await?;
         if pr.draft {
-            self.post(
-                ctx,
-                ar_prompts::localized(
-                    "Skipping test scaffolds: this PR is a draft.",
-                    "テストの足場生成をスキップします: この PR はドラフトです。",
-                ),
-            )
-            .await?;
+            self.post(ctx, tests_draft_message()).await?;
             return Ok(());
         }
         if pr.state != "open" {
-            self.post(
-                ctx,
-                ar_prompts::localized(
-                    "Skipping test scaffolds: this PR is closed/merged. Reopen it first.",
-                    "テストの足場生成をスキップします: この PR はクローズ／マージ済みです。先に Reopen してください。",
-                ),
-            )
-            .await?;
+            self.post(ctx, tests_closed_message()).await?;
             return Ok(());
         }
         let diff = self
@@ -892,14 +869,7 @@ impl ChatHandler<'_> {
                 String::new()
             });
         if diff.trim().is_empty() {
-            self.post(
-                ctx,
-                ar_prompts::localized(
-                    "Test scaffolding can't run without a diff (none returned by Forgejo).",
-                    "テストの足場生成は差分がないと実行できません（Forgejo から差分が返りませんでした）。",
-                ),
-            )
-            .await?;
+            self.post(ctx, tests_no_diff_message()).await?;
             return Ok(());
         }
         let truncated = truncate_for_chat(&diff, AUTOFIX_DIFF_CAP);
@@ -921,14 +891,7 @@ impl ChatHandler<'_> {
             Ok(output) => output,
             Err(error) => {
                 tracing::warn!(%error, "tests model returned malformed JSON");
-                self.post(
-                    ctx,
-                    ar_prompts::localized(
-                        "Test scaffolding didn't return well-formed output; nothing posted.",
-                        "テストの足場生成の出力が正しい形式でなかったため、何も投稿しませんでした。",
-                    ),
-                )
-                .await?;
+                self.post(ctx, tests_malformed_message()).await?;
                 return Ok(());
             }
         };
@@ -1395,6 +1358,48 @@ fn test_scaffolds_empty_message(raw_scaffold_count: usize) -> String {
             if raw_scaffold_count == 1 { "" } else { "s" }
         )
     }
+}
+
+/// `tests` reply when no cheap-tier model is configured.
+fn tests_no_model_message() -> &'static str {
+    ar_prompts::localized(
+        "Test scaffolding needs an LLM_CHEAP_MODEL configured. \
+         Try `@auto-review help` for the structured commands.",
+        "テストの足場生成には LLM_CHEAP_MODEL の設定が必要です。\
+         コマンド一覧は `@auto-review help` を見てください。",
+    )
+}
+
+/// `tests` reply when the PR is a draft.
+fn tests_draft_message() -> &'static str {
+    ar_prompts::localized(
+        "Skipping test scaffolds: this PR is a draft.",
+        "テストの足場生成をスキップします: この PR はドラフトです。",
+    )
+}
+
+/// `tests` reply when the PR is closed or merged.
+fn tests_closed_message() -> &'static str {
+    ar_prompts::localized(
+        "Skipping test scaffolds: this PR is closed/merged. Reopen it first.",
+        "テストの足場生成をスキップします: この PR はクローズ／マージ済みです。先に Reopen してください。",
+    )
+}
+
+/// `tests` reply when Forgejo returned no diff.
+fn tests_no_diff_message() -> &'static str {
+    ar_prompts::localized(
+        "Test scaffolding can't run without a diff (none returned by Forgejo).",
+        "テストの足場生成は差分がないと実行できません（Forgejo から差分が返りませんでした）。",
+    )
+}
+
+/// `tests` reply when the model output was malformed.
+fn tests_malformed_message() -> &'static str {
+    ar_prompts::localized(
+        "Test scaffolding didn't return well-formed output; nothing posted.",
+        "テストの足場生成の出力が正しい形式でなかったため、何も投稿しませんでした。",
+    )
 }
 
 /// Reduce an inline finding comment to a one-line summary for the override
