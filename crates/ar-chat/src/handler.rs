@@ -117,6 +117,7 @@ cases (tests live in separate files, so no inline suggestion).
 
 Anything else after the mention is treated as a freeform question.";
 
+/// Japanese variant of [`HELP_TEXT`] (fork extension).
 const HELP_TEXT_JA: &str = "\
 **auto_review チャットコマンド**（`@auto-review` とメンションしてください。`@auto_review` でも動きます）:
 
@@ -136,20 +137,11 @@ off-by-one）に、インラインの suggestion パッチを提案します。1
 
 メンションの後に書いたそれ以外の内容は、自由形式の質問として扱います。";
 
+/// Japanese variant of [`DOCSTRING_RETIRED_NOTICE`] (fork extension).
 const DOCSTRING_RETIRED_NOTICE_JA: &str = "`docstring` コマンドは廃止され、提案は \
 生成されなくなりました。機械的な修正には `@auto-review autofix` を使ってください。 \
 docstring の作成は、自分のコーディングエージェントに頼んでください。 \
 現在のコマンドは `@auto-review help` で確認できます。";
-
-/// The `help` reply in the configured output language.
-fn help_text() -> &'static str {
-    ar_prompts::localized(HELP_TEXT, HELP_TEXT_JA)
-}
-
-/// The retired-`docstring` reply in the configured output language.
-fn docstring_retired_notice() -> &'static str {
-    ar_prompts::localized(DOCSTRING_RETIRED_NOTICE, DOCSTRING_RETIRED_NOTICE_JA)
-}
 
 /// Per-field caps on what we'll inline into a Forgejo review-comment
 /// body. Without these, a misbehaving cheap-tier model could blow
@@ -567,22 +559,7 @@ impl ChatHandler<'_> {
             self.remember_correction(&ctx, correction).await?;
             self.post(
                 ctx,
-                &if ar_prompts::japanese_output_enabled() {
-                    format!(
-                        "未解決の指摘を @{} さんのリクエストで上書きすることはできません。\
-                         上書きできるのは、このリポジトリの `.auto_review.yaml` で \
-                         `override_approvers` に指定されたユーザーだけです。\
-                         フィードバックは今後のレビューのために記録しました。",
-                        ctx.commenter_login
-                    )
-                } else {
-                    format!(
-                        "I can't override my outstanding findings on request, @{}. Only users listed under \
-                         `override_approvers` in this repo's `.auto_review.yaml` may force an approval over open \
-                         findings. I've noted your feedback for future reviews.",
-                        ctx.commenter_login
-                    )
-                },
+                &override_denied_message(ctx.commenter_login),
             )
             .await?;
             return Ok(());
@@ -774,19 +751,7 @@ impl ChatHandler<'_> {
         kind: SuggestionKind,
     ) -> Result<(), ChatError> {
         if self.llm.provider(ModelTier::Cheap).is_err() {
-            let msg = if ar_prompts::japanese_output_enabled() {
-                format!(
-                    "{} には LLM_CHEAP_MODEL の設定が必要です。\
-                     コマンド一覧は `@auto-review help` を見てください。",
-                    kind.label()
-                )
-            } else {
-                format!(
-                    "{} needs an LLM_CHEAP_MODEL configured. Try \
-                     `@auto-review help` for the structured commands.",
-                    kind.label()
-                )
-            };
+            let msg = suggest_no_model_message(kind);
             self.post(ctx, &msg).await?;
             return Ok(());
         }
@@ -795,14 +760,7 @@ impl ChatHandler<'_> {
             .get_pull_request(ctx.owner, ctx.repo, ctx.issue_number)
             .await?;
         if pr.draft {
-            let msg = if ar_prompts::japanese_output_enabled() {
-                format!(
-                    "{} をスキップします: この PR はドラフトです。",
-                    kind.label()
-                )
-            } else {
-                format!("Skipping {}: this PR is a draft.", kind.lowercase_label())
-            };
+            let msg = suggest_draft_message(kind);
             self.post(ctx, &msg).await?;
             return Ok(());
         }
@@ -810,17 +768,7 @@ impl ChatHandler<'_> {
         // suggestions on a closed PR either errors from Forgejo or
         // posts comments the user can't act on.
         if pr.state != "open" {
-            let msg = if ar_prompts::japanese_output_enabled() {
-                format!(
-                    "{} をスキップします: この PR はクローズ／マージ済みです。先に Reopen してください。",
-                    kind.label()
-                )
-            } else {
-                format!(
-                    "Skipping {}: this PR is closed/merged. Reopen it first.",
-                    kind.lowercase_label()
-                )
-            };
+            let msg = suggest_closed_message(kind);
             self.post(ctx, &msg).await?;
             return Ok(());
         }
@@ -833,17 +781,7 @@ impl ChatHandler<'_> {
                 String::new()
             });
         if diff.trim().is_empty() {
-            let msg = if ar_prompts::japanese_output_enabled() {
-                format!(
-                    "{} は差分がないと実行できません（Forgejo から差分が返りませんでした）。",
-                    kind.label()
-                )
-            } else {
-                format!(
-                    "{} can't run without a diff (none returned by Forgejo).",
-                    kind.label()
-                )
-            };
+            let msg = suggest_no_diff_message(kind);
             self.post(ctx, &msg).await?;
             return Ok(());
         }
@@ -868,17 +806,7 @@ impl ChatHandler<'_> {
             Ok(output) => output,
             Err(error) => {
                 tracing::warn!(kind = ?kind, %error, "model returned malformed JSON");
-                let msg = if ar_prompts::japanese_output_enabled() {
-                    format!(
-                        "{} の出力が正しい形式でなかったため、何も投稿しませんでした。",
-                        kind.label()
-                    )
-                } else {
-                    format!(
-                        "{} didn't return well-formed suggestions; nothing posted.",
-                        kind.label()
-                    )
-                };
+                let msg = suggest_malformed_message(kind);
                 self.post(ctx, &msg).await?;
                 return Ok(());
             }
@@ -1020,25 +948,7 @@ impl ChatHandler<'_> {
             // item_name or empty source). Operators seeing the
             // second variant know the model is producing low-quality
             // output and can investigate.
-            let msg = if ar_prompts::japanese_output_enabled() {
-                if raw_scaffold_count == 0 {
-                    "差分の中に、新しいカバレッジが必要そうな項目は見つかりませんでした。"
-                        .to_owned()
-                } else {
-                    format!(
-                        "テストの足場を {raw_scaffold_count} 件提案しましたが、項目名と\
-                         ソースコードの両方が揃ったものがなかったため、すべて破棄しました（形式不備）。"
-                    )
-                }
-            } else if raw_scaffold_count == 0 {
-                "Test scaffolding found nothing in the diff that needs new coverage.".to_owned()
-            } else {
-                format!(
-                    "Test scaffolding proposed {raw_scaffold_count} scaffold{} but \
-                     none had both an item name and source code (all dropped as malformed).",
-                    if raw_scaffold_count == 1 { "" } else { "s" }
-                )
-            };
+            let msg = test_scaffolds_empty_message(raw_scaffold_count);
             self.post(ctx, &msg).await?;
             return Ok(());
         }
@@ -1363,6 +1273,128 @@ fn parse_override_reason(content: &str) -> Option<String> {
     let out = serde_json::from_str::<Out>(content).ok()?;
     (out.has_explanation && !out.explanation.trim().is_empty())
         .then(|| out.explanation.trim().to_owned())
+}
+
+/// The `help` reply in the configured output language.
+fn help_text() -> &'static str {
+    ar_prompts::localized(HELP_TEXT, HELP_TEXT_JA)
+}
+
+/// The retired-`docstring` reply in the configured output language.
+fn docstring_retired_notice() -> &'static str {
+    ar_prompts::localized(DOCSTRING_RETIRED_NOTICE, DOCSTRING_RETIRED_NOTICE_JA)
+}
+
+/// Reply when a non-approver asks to override outstanding findings.
+fn override_denied_message(commenter_login: &str) -> String {
+    if ar_prompts::japanese_output_enabled() {
+        format!(
+            "未解決の指摘を @{commenter_login} さんのリクエストで上書きすることはできません。\
+             上書きできるのは、このリポジトリの `.auto_review.yaml` で \
+             `override_approvers` に指定されたユーザーだけです。\
+             フィードバックは今後のレビューのために記録しました。"
+        )
+    } else {
+        format!(
+            "I can't override my outstanding findings on request, @{commenter_login}. Only users listed under \
+             `override_approvers` in this repo's `.auto_review.yaml` may force an approval over open \
+             findings. I've noted your feedback for future reviews."
+        )
+    }
+}
+
+/// Suggestion-command reply when no cheap-tier model is configured.
+fn suggest_no_model_message(kind: SuggestionKind) -> String {
+    if ar_prompts::japanese_output_enabled() {
+        format!(
+            "{} には LLM_CHEAP_MODEL の設定が必要です。\
+             コマンド一覧は `@auto-review help` を見てください。",
+            kind.label()
+        )
+    } else {
+        format!(
+            "{} needs an LLM_CHEAP_MODEL configured. Try \
+             `@auto-review help` for the structured commands.",
+            kind.label()
+        )
+    }
+}
+
+/// Suggestion-command reply when the PR is a draft.
+fn suggest_draft_message(kind: SuggestionKind) -> String {
+    if ar_prompts::japanese_output_enabled() {
+        format!("{} をスキップします: この PR はドラフトです。", kind.label())
+    } else {
+        format!("Skipping {}: this PR is a draft.", kind.lowercase_label())
+    }
+}
+
+/// Suggestion-command reply when the PR is closed or merged.
+fn suggest_closed_message(kind: SuggestionKind) -> String {
+    if ar_prompts::japanese_output_enabled() {
+        format!(
+            "{} をスキップします: この PR はクローズ／マージ済みです。先に Reopen してください。",
+            kind.label()
+        )
+    } else {
+        format!(
+            "Skipping {}: this PR is closed/merged. Reopen it first.",
+            kind.lowercase_label()
+        )
+    }
+}
+
+/// Suggestion-command reply when Forgejo returned no diff.
+fn suggest_no_diff_message(kind: SuggestionKind) -> String {
+    if ar_prompts::japanese_output_enabled() {
+        format!(
+            "{} は差分がないと実行できません（Forgejo から差分が返りませんでした）。",
+            kind.label()
+        )
+    } else {
+        format!(
+            "{} can't run without a diff (none returned by Forgejo).",
+            kind.label()
+        )
+    }
+}
+
+/// Suggestion-command reply when the model output was malformed.
+fn suggest_malformed_message(kind: SuggestionKind) -> String {
+    if ar_prompts::japanese_output_enabled() {
+        format!(
+            "{} の出力が正しい形式でなかったため、何も投稿しませんでした。",
+            kind.label()
+        )
+    } else {
+        format!(
+            "{} didn't return well-formed suggestions; nothing posted.",
+            kind.label()
+        )
+    }
+}
+
+/// `tests` reply when nothing usable was scaffolded: distinguishes "the
+/// model proposed nothing" from "every proposal was malformed".
+fn test_scaffolds_empty_message(raw_scaffold_count: usize) -> String {
+    if ar_prompts::japanese_output_enabled() {
+        if raw_scaffold_count == 0 {
+            "差分の中に、新しいカバレッジが必要そうな項目は見つかりませんでした。".to_owned()
+        } else {
+            format!(
+                "テストの足場を {raw_scaffold_count} 件提案しましたが、項目名と\
+                 ソースコードの両方が揃ったものがなかったため、すべて破棄しました（形式不備）。"
+            )
+        }
+    } else if raw_scaffold_count == 0 {
+        "Test scaffolding found nothing in the diff that needs new coverage.".to_owned()
+    } else {
+        format!(
+            "Test scaffolding proposed {raw_scaffold_count} scaffold{} but \
+             none had both an item name and source code (all dropped as malformed).",
+            if raw_scaffold_count == 1 { "" } else { "s" }
+        )
+    }
 }
 
 /// Reduce an inline finding comment to a one-line summary for the override
