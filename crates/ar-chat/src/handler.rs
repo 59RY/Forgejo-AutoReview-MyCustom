@@ -557,11 +557,8 @@ impl ChatHandler<'_> {
         let config = self.load_repo_config_for_chat(&ctx, &pr).await;
         if !config.is_override_approver(ctx.commenter_login) {
             self.remember_correction(&ctx, correction).await?;
-            self.post(
-                ctx,
-                &override_denied_message(ctx.commenter_login),
-            )
-            .await?;
+            self.post(ctx, &override_denied_message(ctx.commenter_login))
+                .await?;
             return Ok(());
         }
 
@@ -1323,7 +1320,10 @@ fn suggest_no_model_message(kind: SuggestionKind) -> String {
 /// Suggestion-command reply when the PR is a draft.
 fn suggest_draft_message(kind: SuggestionKind) -> String {
     if ar_prompts::japanese_output_enabled() {
-        format!("{} をスキップします: この PR はドラフトです。", kind.label())
+        format!(
+            "{} をスキップします: この PR はドラフトです。",
+            kind.label()
+        )
     } else {
         format!("Skipping {}: this PR is a draft.", kind.lowercase_label())
     }
