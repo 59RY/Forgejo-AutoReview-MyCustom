@@ -1,4 +1,5 @@
 use crate::fence::fence_untrusted;
+use std::{env, sync::OnceLock};
 
 /// Cap the rendered PR body. Forgejo lets PR descriptions grow to
 /// ~64 KiB, but the LLM context budget is dominated by the diff —
@@ -86,6 +87,14 @@ Finding title and category:
   - `naming`: unclear or misleading names.
   - `style`: formatting and stylistic nits.
 ";
+
+/// Instruction appended to the system prompt when Japanese output is
+/// enabled. It covers only the human-readable fields; the JSON keys,
+/// severity values and category identifiers stay in English so the
+/// output contract is unchanged.
+pub const JAPANESE_OUTPUT_INSTRUCTION: &str = "Write all human-readable output fields \
+    (summary, walkthrough, and each finding's title and message) in Japanese \
+    unless the pull request or the user specifically indicates otherwise.";
 
 /// Inputs for rendering the review user prompt.
 #[derive(Debug, Clone)]
@@ -244,14 +253,6 @@ pub fn system_prompt() -> &'static str {
     SYSTEM_PROMPT
 }
 
-/// Instruction appended to the system prompt when Japanese output is
-/// enabled. It covers only the human-readable fields; the JSON keys,
-/// severity values and category identifiers stay in English so the
-/// output contract is unchanged.
-pub const JAPANESE_OUTPUT_INSTRUCTION: &str = "Write all human-readable output fields \
-    (summary, walkthrough, and each finding's title and message) in Japanese \
-    unless the pull request or the user specifically indicates otherwise.";
-
 /// Parse an `AR_JAPANESE_OUTPUT` value, using the same boolean
 /// vocabulary as `LLM_OMIT_TEMPERATURE`. Unset means `false`.
 ///
@@ -259,6 +260,7 @@ pub const JAPANESE_OUTPUT_INSTRUCTION: &str = "Write all human-readable output f
 ///
 /// Returns an error naming the variable when the value is not part of
 /// the boolean vocabulary.
+#[inline]
 pub fn parse_japanese_output(raw: Option<&str>) -> Result<bool, String> {
     match raw.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
         None | Some("" | "0" | "false" | "no" | "off") => Ok(false),
@@ -274,9 +276,9 @@ pub fn parse_japanese_output(raw: Option<&str>) -> Result<bool, String> {
 #[inline]
 #[must_use = "returns the cached flag without side effects"]
 pub fn japanese_output_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        parse_japanese_output(std::env::var("AR_JAPANESE_OUTPUT").ok().as_deref()).unwrap_or(false)
+        parse_japanese_output(env::var("AR_JAPANESE_OUTPUT").ok().as_deref()).unwrap_or(false)
     })
 }
 
@@ -332,18 +334,18 @@ mod tests {
 
     #[test]
     fn parse_japanese_output_accepts_the_bool_vocabulary() {
-        assert!(!parse_japanese_output(None).expect("unset parses"));
-        assert!(!parse_japanese_output(Some(" off ")).expect("off parses"));
-        assert!(parse_japanese_output(Some("TRUE")).expect("true parses"));
-        assert!(parse_japanese_output(Some("1")).expect("1 parses"));
+        assert_eq!(parse_japanese_output(None), Ok(false));
+        assert_eq!(parse_japanese_output(Some(" off ")), Ok(false));
+        assert_eq!(parse_japanese_output(Some("TRUE")), Ok(true));
+        assert_eq!(parse_japanese_output(Some("1")), Ok(true));
     }
 
     #[test]
     fn parse_japanese_output_rejects_garbage_naming_the_variable() {
-        let err = parse_japanese_output(Some("maybe")).expect_err("garbage is rejected");
         assert!(
-            err.contains("AR_JAPANESE_OUTPUT"),
-            "error names the variable: {err}"
+            parse_japanese_output(Some("maybe"))
+                .is_err_and(|err| err.contains("AR_JAPANESE_OUTPUT")),
+            "error names the variable"
         );
     }
 
