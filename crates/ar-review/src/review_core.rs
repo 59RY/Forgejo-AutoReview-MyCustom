@@ -14,7 +14,8 @@ use crate::verify::verify_findings;
 use alloc::sync::Arc;
 use ar_llm::{ModelTier, Router as LlmRouter};
 use ar_prompts::{
-    render_review_prompt, system_prompt, ReviewOutput, ReviewPromptInputs, ReviewSeverity,
+    japanese_output_enabled, render_review_prompt, system_prompt_for, ReviewOutput,
+    ReviewPromptInputs, ReviewSeverity,
 };
 use std::path::Path;
 use std::sync::Mutex;
@@ -132,8 +133,8 @@ pub async fn run_review_core(args: ReviewCoreArgs<'_>) -> Result<ReviewDraft, Re
 
     // Track the post-floor / pre-verifier count so we can report how many
     // findings the verifier dropped.
-    let mut output =
-        generate_with_self_heal(&llm, system_prompt(), &prompt, HealConfig::default()).await?;
+    let system = system_prompt_for(japanese_output_enabled());
+    let mut output = generate_with_self_heal(&llm, &system, &prompt, HealConfig::default()).await?;
     apply_severity_floor(&mut output, args.min_severity);
     let pre_verify_count = output.findings.len();
     output = match (args.verify_mode, args.workspace_path) {

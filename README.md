@@ -1,5 +1,23 @@
 # auto_review
 
+> **About this fork**
+>
+> This repository is a fork of [jwilger/auto_review](https://github.com/jwilger/auto_review),
+> maintained for a private Forgejo instance. Everything below this section is
+> the upstream README, unchanged.
+>
+> Differences from upstream:
+>
+> - **Optional Japanese review output.** Setting `AR_JAPANESE_OUTPUT=true`
+>   makes review summaries, walkthroughs, and finding titles/messages come
+>   back in Japanese. The JSON keys, severity values, and category
+>   identifiers stay in English, and with the variable unset (or `false`)
+>   the prompts are byte-for-byte the upstream ones.
+> - **Build notes for Linux aarch64.** Upstream release binaries are Linux
+>   `x86_64` only, so aarch64 hosts build from source; see the build section
+>   of the upstream README below and use the Cargo (bare gateway) route on
+>   hosts without Nix.
+
 A self-hosted, AI-driven pull-request reviewer for [Forgejo](https://forgejo.org/)
 and GitHub.
 
