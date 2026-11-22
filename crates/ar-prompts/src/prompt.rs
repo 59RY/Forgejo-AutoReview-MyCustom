@@ -288,7 +288,7 @@ pub fn japanese_output_enabled() -> bool {
 /// cost footers, chat replies) that no LLM prompt produces.
 #[inline]
 #[must_use = "returns the selected string without side effects"]
-pub fn localized<'a>(en: &'a str, ja: &'a str) -> &'a str {
+pub fn localized<'text>(en: &'text str, ja: &'text str) -> &'text str {
     if japanese_output_enabled() {
         ja
     } else {
