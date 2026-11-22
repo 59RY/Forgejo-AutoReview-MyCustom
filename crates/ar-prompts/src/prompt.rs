@@ -263,9 +263,7 @@ pub fn parse_japanese_output(raw: Option<&str>) -> Result<bool, String> {
     match raw.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
         None | Some("" | "0" | "false" | "no" | "off") => Ok(false),
         Some("1" | "true" | "yes" | "on") => Ok(true),
-        Some(_) => Err(
-            "AR_JAPANESE_OUTPUT takes true/false, yes/no, on/off, or 1/0".to_owned(),
-        ),
+        Some(_) => Err("AR_JAPANESE_OUTPUT takes true/false, yes/no, on/off, or 1/0".to_owned()),
     }
 }
 
@@ -278,8 +276,7 @@ pub fn parse_japanese_output(raw: Option<&str>) -> Result<bool, String> {
 pub fn japanese_output_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
-        parse_japanese_output(std::env::var("AR_JAPANESE_OUTPUT").ok().as_deref())
-            .unwrap_or(false)
+        parse_japanese_output(std::env::var("AR_JAPANESE_OUTPUT").ok().as_deref()).unwrap_or(false)
     })
 }
 
@@ -344,7 +341,10 @@ mod tests {
     #[test]
     fn parse_japanese_output_rejects_garbage_naming_the_variable() {
         let err = parse_japanese_output(Some("maybe")).expect_err("garbage is rejected");
-        assert!(err.contains("AR_JAPANESE_OUTPUT"), "error names the variable: {err}");
+        assert!(
+            err.contains("AR_JAPANESE_OUTPUT"),
+            "error names the variable: {err}"
+        );
     }
 
     fn sample<'input>(diff: &'input str, files: &'input [String]) -> ReviewPromptInputs<'input> {

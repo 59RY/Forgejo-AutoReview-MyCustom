@@ -562,20 +562,20 @@ async fn run_one(path: &Path, llm: &LlmRouter, verifier_enabled: bool) -> Fixtur
 
     let started = Instant::now();
     let system = system_prompt_for(japanese_output_enabled());
-    let initial =
-        match generate_with_self_heal(llm, &system, &prompt, HealConfig::default()).await {
-            Ok(output) => output,
-            Err(err) => {
-                return FixtureResult {
-                    name: fixture.name,
-                    findings_initial: 0,
-                    findings_after_verify: 0,
-                    latency_ms: started.elapsed().as_millis(),
-                    error: Some(format!("review LLM call failed: {err}")),
-                    label_match: None,
-                };
-            }
-        };
+    let initial = match generate_with_self_heal(llm, &system, &prompt, HealConfig::default()).await
+    {
+        Ok(output) => output,
+        Err(err) => {
+            return FixtureResult {
+                name: fixture.name,
+                findings_initial: 0,
+                findings_after_verify: 0,
+                latency_ms: started.elapsed().as_millis(),
+                error: Some(format!("review LLM call failed: {err}")),
+                label_match: None,
+            };
+        }
+    };
     let findings_initial = initial.findings.len();
 
     let scored_output = if verifier_enabled {

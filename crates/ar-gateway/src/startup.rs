@@ -1336,10 +1336,9 @@ pub async fn run_from_env(options: StartupOptions) -> Result<()> {
     // Validated here so a typo fails startup instead of silently
     // reviewing in English; ar-prompts reads the same variable when
     // rendering each review's system prompt.
-    let japanese_output = ar_prompts::parse_japanese_output(
-        read_non_empty_env("AR_JAPANESE_OUTPUT").as_deref(),
-    )
-    .map_err(anyhow::Error::msg)?;
+    let japanese_output =
+        ar_prompts::parse_japanese_output(read_non_empty_env("AR_JAPANESE_OUTPUT").as_deref())
+            .map_err(anyhow::Error::msg)?;
     if japanese_output {
         tracing::info!("AR_JAPANESE_OUTPUT set; review output will be written in Japanese");
     }
