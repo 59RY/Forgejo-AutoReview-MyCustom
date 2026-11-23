@@ -18,6 +18,10 @@ pub mod host;
 pub mod ignored;
 pub mod mapping;
 pub mod override_marker;
+#[expect(
+    clippy::non_ascii_literal,
+    reason = "the fork's Japanese review scaffolding (AR_JAPANESE_OUTPUT) is kept as readable literals"
+)]
 pub mod pipeline;
 pub mod rag_context;
 pub mod review_core;

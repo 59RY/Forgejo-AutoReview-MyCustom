@@ -8,9 +8,13 @@
 >
 > Differences from upstream:
 >
-> - **Optional Japanese review output.** Setting `AR_JAPANESE_OUTPUT=true`
+> - **Optional Japanese output.** Setting `AR_JAPANESE_OUTPUT=true`
 >   makes review summaries, walkthroughs, and finding titles/messages come
->   back in Japanese. The JSON keys, severity values, and category
+>   back in Japanese. Gateway-rendered scaffolding is localized too: the
+>   pre-merge checks section (including the metadata rationale), the LLM
+>   usage/cost footer, override approval bodies, and the fixed `@auto-review`
+>   chat replies (freeform chat answers are also asked to reply in
+>   Japanese). The JSON keys, severity values, and category
 >   identifiers stay in English, and with the variable unset (or `false`)
 >   the prompts are byte-for-byte the upstream ones.
 > - **Build notes for Linux aarch64.** Upstream release binaries are Linux

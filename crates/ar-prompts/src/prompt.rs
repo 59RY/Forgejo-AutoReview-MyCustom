@@ -282,6 +282,20 @@ pub fn japanese_output_enabled() -> bool {
     })
 }
 
+/// Pick the Japanese variant of a fixed user-visible string when
+/// Japanese output is enabled, else the English original. Fork
+/// extension: covers gateway-rendered scaffolding (section headings,
+/// cost footers, chat replies) that no LLM prompt produces.
+#[inline]
+#[must_use = "returns the selected string without side effects"]
+pub fn localized<'text>(en: &'text str, ja: &'text str) -> &'text str {
+    if japanese_output_enabled() {
+        ja
+    } else {
+        en
+    }
+}
+
 /// The system prompt to send for one review run: [`system_prompt`]
 /// unchanged when `japanese_output` is `false`, with
 /// [`JAPANESE_OUTPUT_INSTRUCTION`] appended as its own section when
