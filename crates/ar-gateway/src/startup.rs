@@ -222,6 +222,7 @@ const INNER_GATEWAY_ENV_ALLOWLIST: &[&str] = &[
     "LLM_EMBEDDING_API_KEY",
     "LLM_OMIT_TEMPERATURE",
     "AR_JAPANESE_OUTPUT",
+    "AR_SUPPRESS_QUEUE_ACK",
     "AR_EMBED_INPUT_CAP_BYTES",
     "AR_EMBED_BATCH_SIZE",
     "AR_EMBED_NUM_CTX",
@@ -1341,6 +1342,18 @@ pub async fn run_from_env(options: StartupOptions) -> Result<()> {
             .map_err(anyhow::Error::msg)?;
     if japanese_output {
         tracing::info!("AR_JAPANESE_OUTPUT set; review output will be written in Japanese");
+    }
+
+    // Same fail-fast treatment: a typo must not silently change
+    // whether re-review posts its queue acknowledgement.
+    let suppress_queue_ack = ar_prompts::parse_suppress_queue_ack(
+        read_non_empty_env("AR_SUPPRESS_QUEUE_ACK").as_deref(),
+    )
+    .map_err(anyhow::Error::msg)?;
+    if suppress_queue_ack {
+        tracing::info!(
+            "AR_SUPPRESS_QUEUE_ACK set; re-review queue acknowledgements will not be posted"
+        );
     }
 
     let reasoning_provider = Arc::new(

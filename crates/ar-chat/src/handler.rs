@@ -668,6 +668,13 @@ impl ChatHandler<'_> {
             force: true,
         };
         dispatcher.dispatch(job).await;
+        // Fork extension: with AR_SUPPRESS_QUEUE_ACK set, the queued
+        // acknowledgement comment is skipped. The commit status the
+        // dispatcher posts and the review itself carry the signal, so
+        // the PR timeline stays free of a receipt nobody acts on.
+        if ar_prompts::suppress_queue_ack_enabled() {
+            return Ok(());
+        }
         let reply = if ar_prompts::japanese_output_enabled() {
             format!(
                 "強制レビューをキューに入れました（対象コミット: {}）。CI のゲートを意図的にバイパスします。進捗はコミットステータスのバッジで確認してください。",

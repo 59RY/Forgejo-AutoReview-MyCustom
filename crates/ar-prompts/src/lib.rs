@@ -26,9 +26,10 @@ pub mod verification;
 pub use crate::{
     fence::{fence_nonce, fence_untrusted, process_nonce_salt, FENCE_MARKER_PREFIX},
     prompt::{
-        japanese_output_enabled, localized, parse_japanese_output, render_review_prompt,
-        system_prompt, system_prompt_for, ReviewPromptInputs, JAPANESE_OUTPUT_INSTRUCTION,
-        PR_BODY_MAX_BYTES, PR_TITLE_MAX_BYTES,
+        japanese_output_enabled, localized, parse_ar_bool, parse_japanese_output,
+        parse_suppress_queue_ack, render_review_prompt, suppress_queue_ack_enabled, system_prompt,
+        system_prompt_for, ReviewPromptInputs, JAPANESE_OUTPUT_INSTRUCTION, PR_BODY_MAX_BYTES,
+        PR_TITLE_MAX_BYTES,
     },
     schema::review_schema,
     types::{FindingCategory, ReviewFinding, ReviewOutput, ReviewSeverity},
