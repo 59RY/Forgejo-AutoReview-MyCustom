@@ -7,11 +7,8 @@ and review history are the same as on Forgejo; only the repository-host adapter
 differs.
 
 ```text
-GitHub App webhook ──> POST /webhooks/github ──> chat commands (@auto-review ...)
-GitHub Actions job ──> POST /reviews/ci {"provider":"github"} ──> semantic review
-                                         │
-                                         └─> GitHub App installation token
-                                             (one repository, short-lived)
+GitHub App webhook ──> POST /webhooks/github ──> chat commands
+                                              └─> optional CI gate ──> review
 ```
 
 The gateway never uses a personal access token for GitHub. Each API call uses
@@ -33,12 +30,14 @@ GitHub Apps → New GitHub App**) or under your user account.
   | Contents | Read | clone at the PR head, read `.auto_review.yaml` |
   | Pull requests | Read & write | PR metadata, diffs, reviews, inline comments |
   | Issues | Read & write | PR conversation comments (chat replies) |
-  | Commit statuses | Read & write | the `auto_review` status check |
+  | Checks | Read | read GitHub check runs when a repository enables CI gating |
+  | Commit statuses | Read & write | read CI statuses and publish `auto_review` |
   | Metadata | Read | required by GitHub |
 
-- **Subscribe to events:** *Issue comment* and *Pull request review comment*.
-  These carry `@auto-review` chat commands. Pull request events are not
-  needed: CI requests semantic review (step 4).
+- **Subscribe to events:** *Pull request* for automatic review, plus
+  *Issue comment* and *Pull request review comment* for chat commands.
+  If you enable CI gating with an existing App, have installation owners
+  accept the **Checks: Read** permission first.
 
 After creating the App, note its **App ID** and generate a **private key**
 (`.pem`). Install the App on the repositories it should review.
@@ -61,7 +60,6 @@ LLM_API_KEY=<provider key>
 LLM_REASONING_MODEL=gpt-4o-mini
 # For OpenAI reasoning models (gpt-5.x, gpt-6.x, o-series) also set:
 # LLM_OMIT_TEMPERATURE=true
-AR_CI_REVIEW_TOKEN=<32+ random characters>
 ```
 
 | Variable | Required | Notes |
@@ -96,48 +94,50 @@ curl -fsS https://<gateway-host>/readyz                   # "github reachable (a
 In the App settings, **Advanced → Recent Deliveries** should show the initial
 `ping` delivery answered with `200`.
 
-## 4. Trigger semantic review from GitHub Actions
+## 4. Verify automatic review
 
-Semantic review runs after your own CI gates pass (ADR-0012). Add a job that
-depends on them and calls the gateway through the bundled action:
+Open a non-draft PR. By default, the App queues a review without waiting for
+CI. It also reacts to new commits, reopened PRs, and PRs marked ready for
+review. No review-specific workflow or repository secret is needed, including
+for fork PRs.
+
+To review drafts or wait for particular CI jobs, add either option to
+`.auto_review.yaml` on the PR's **base branch**:
 
 ```yaml
-# .github/workflows/ci.yml
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: make test
-
-  auto-review:
-    if: ${{ github.event_name == 'pull_request' }}
-    needs: [test]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: jwilger/auto_review/deploy/github-action@main
-        with:
-          gateway-url: https://reviewer.example.com
-          action-token: ${{ secrets.AUTO_REVIEW_CI_TOKEN }}
+github_automatic_review:
+  allow_drafts: true
+  required_checks:
+    Test: pass
+    Coverage: complete
 ```
 
-Store the gateway's `AR_CI_REVIEW_TOKEN` as the `AUTO_REVIEW_CI_TOKEN`
-repository or organization secret.
+`allow_drafts` defaults to `false`, and `required_checks` defaults to empty.
+Use exact check-run names or commit status contexts. Every listed name must
+appear on the current PR head or GitHub test merge commit, and every matching
+result must satisfy its requirement. `pass` accepts success, skipped, or
+neutral; `complete` also accepts terminal failures. Missing names and
+unreadable results block a configured wait. Unlisted results and the
+`auto_review` context do not count. Checks reported only on the base branch
+(for example, some `pull_request_target` workflows) cannot satisfy this gate.
 
-GitHub does not expose repository secrets to `pull_request` workflows from
-forks, so fork PRs are not reviewed by this trigger. A maintainer can still
-comment `@auto-review re-review` on a fork PR to force a review.
+For a configured wait, the gateway posts `auto_review waiting for CI` unless
+a review status already exists for that commit (a canceled or timed-out wait
+can be replaced). It allows 30 seconds for CI to register, then polls with
+backoff for up to two hours and rechecks when a worker becomes available.
+If the watch expires or the PR is no longer eligible, the gateway attempts
+to replace its pending status with an error, but only if its status is still
+latest. A restart or a lost response can leave a pending status visible.
+The gateway reads the policy when the watch starts and uses it for that watch;
+base-branch config changes apply to new watches. An unreadable or invalid
+config does not fall back to immediate automatic review. A maintainer can request `@auto-review re-review` without
+this automatic admission policy.
 
-The action posts:
-
-```json
-{"provider": "github", "owner": "...", "repo": "...", "pr_number": 7,
- "head_sha": "...", "force": false, "installation_id": 42}
-```
-
-`installation_id` is optional; the gateway looks up the installation for the
-repository when it is omitted. The gateway fetches the PR, rejects a stale
-`head_sha` (`409`), drafts, and closed PRs, then reviews in the background.
+Remove existing review-request steps after confirming App delivery. The
+bundled action is now a no-op. Older pinned versions may still call
+`/reviews/ci`; valid authenticated GitHub requests are accepted without
+starting a review. Keep `AR_CI_REVIEW_TOKEN` and the corresponding workflow
+secret while those pinned callers remain, or if Forgejo CI uses the endpoint.
 
 ## Chat commands
 
@@ -172,7 +172,7 @@ command.
 ## Running Forgejo and GitHub together
 
 Both providers share the learnings store, review history, vector store,
-metrics, and `AR_CI_REVIEW_TOKEN`. Each provider has its own review
+and metrics. Each provider has its own review
 dispatcher, so `AR_REVIEW_CONCURRENCY` caps in-flight reviews per provider.
 Review history is keyed by owner, repository, and PR number. Avoid serving an
 identically named repository from both forges on one gateway; incremental
