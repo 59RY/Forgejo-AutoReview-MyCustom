@@ -7,7 +7,8 @@
 extern crate alloc;
 
 use alloc::sync::Arc;
-use std::sync::Mutex;
+use std::env;
+use std::sync::{Mutex, PoisonError};
 
 use ar_chat::{ChatCommand, ChatContext, ChatHandler};
 use ar_forgejo::Client as ForgejoClient;
@@ -26,7 +27,7 @@ impl JobDispatcher for RecordingDispatcher {
     async fn dispatch(&self, job: ReviewJob) {
         self.seen
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(PoisonError::into_inner)
             .push(job);
     }
 }
@@ -44,8 +45,16 @@ fn ctx() -> ChatContext<'static> {
 
 #[tokio::test]
 #[expect(
+    clippy::tests_outside_test_module,
+    reason = "files under tests/ are separate integration-test crates built only by cargo test; a #[cfg(test)] module wrapper would add nothing"
+)]
+#[expect(
     clippy::default_numeric_fallback,
     reason = "serde_json::json! numbers here are untyped JSON wire values in the mocked Forgejo payload; type suffixes would edit the fixture without changing the bytes sent"
+)]
+#[expect(
+    clippy::indexing_slicing,
+    reason = "an out-of-bounds index fails this test just as a failed assertion would; the indexed assertions stay as written"
 )]
 #[expect(
     clippy::expect_used,
@@ -56,7 +65,7 @@ fn ctx() -> ChatContext<'static> {
     reason = "a poisoned lock should fail this test at once; the asserted values stay as written"
 )]
 async fn re_review_with_suppressed_ack_queues_job_without_comment() {
-    std::env::set_var("AR_SUPPRESS_QUEUE_ACK", "true");
+    env::set_var("AR_SUPPRESS_QUEUE_ACK", "true");
 
     let server = MockServer::start().await;
     let forgejo = ForgejoClient::new(&server.uri(), "tok").expect("client");
