@@ -1,6 +1,8 @@
 # Contributing
 
-Thanks for considering a contribution to `auto_review`.
+Thanks for considering a contribution to `auto_review`. See
+[Engineering standards](docs/engineering.md) for what changes must satisfy,
+what we prefer, and what evidence to bring to review.
 
 ## Development setup
 
@@ -43,7 +45,7 @@ just promtool          # promtool check and unit tests of the Prometheus rules
 just conflict-markers  # no unresolved merge conflict markers in tracked files
 
 # Checks that `just ci` leaves out:
-just advisories   # cargo deny check advisories; needs network
+just advisories   # needs network for the RustSec advisory database
 just flake-check  # nix flake check; builds the packages
 ```
 
@@ -53,7 +55,10 @@ a workspace build, shellcheck on `scripts/release`, actionlint on
 `.github/workflows/`, `promtool check rules` plus the promtool unit tests in
 `deploy/prometheus/auto_review.rules.test.yaml` (which catch an alert
 expression that can never match), and a conflict-marker scan of tracked
-files.
+files. Clippy, tests, builds, and dependency checks (including advisories)
+use `--locked` locally and in CI. If a manifest change requires a lockfile
+update, update and commit `Cargo.lock` with it; checks will not rewrite it.
+
 `just test` runs the suite with `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
 `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`
 and `GIT_PREFIX` unset: git exports them to its hooks, and a test fixture that
@@ -73,7 +78,7 @@ it can merge:
 | Check | What it runs |
 |---|---|
 | Format check, Clippy, Test, Dependency policy, Build | `just fmt`, `just clippy`, `just test`, `just deny`, `just build` |
-| Dependency advisories | `just advisories` (`cargo deny check advisories`); `.github/workflows/advisories.yml` also runs it daily against `main` so new advisories surface without a code change |
+| Dependency advisories | `just advisories`; `.github/workflows/advisories.yml` also runs it daily against `main` so new advisories surface without a code change |
 | Shellcheck | `just shellcheck` on `scripts/release` |
 | Actionlint | `just actionlint` on `.github/workflows/` |
 | Promtool | `just promtool`: `promtool check rules` and the promtool unit tests (`deploy/prometheus/auto_review.rules.test.yaml`) of the Prometheus rules in `deploy/prometheus/auto_review.rules.yaml` |
@@ -102,14 +107,20 @@ gh label create factory:approved \
   --description 'maintainer approval for the factory to merge' --color 0E8A16
 ```
 
-After those checks pass, the `Semantic review` job in
-`.github/workflows/ci.yml` asks an auto_review gateway to review the pull
-request through the published auto_review action
-(`deploy/github-action`). It runs for non-draft pull requests into `main`.
-It is not a required check and is not in the ruleset, so a reviewer outage
-never blocks a merge. Until both settings below are present (and on pull
-requests from forks, which get no secrets) it finishes successfully with one
-notice and sends no request. It needs:
+For non-draft pull requests into `main`, the `Semantic review` job waits for
+its verification jobs in `.github/workflows/ci.yml` before requesting a review
+through the published action (`deploy/github-action`). CodeQL runs in a
+separate workflow: it is required for merging but is not a prerequisite of
+this job. A failed or skipped `Semantic review` check does not block merging;
+the ruleset still requires existing review threads to be resolved.
+
+The reviewer reads the project's [rubric](.auto_review.yaml) from the PR's
+base branch. A change to it takes effect after merge; validate it locally
+with `auto-review config validate --strict .auto_review.yaml`.
+
+Until both settings below are present (and on pull requests from forks,
+which get no secrets) the job finishes successfully with one notice and
+sends no request. It needs:
 
 - Repository variable `AUTO_REVIEW_GATEWAY_URL`: the gateway's base URL.
 - Repository secret `AUTO_REVIEW_ACTION_TOKEN`: the bearer token matching
